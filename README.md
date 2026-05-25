@@ -1,10 +1,10 @@
-# Print Console
+## Print Console
 
-A desktop app I built to manage my printer — upload PDFs, preview pages, configure print settings (B&W/color, copies, odd/even pages), and monitor the print queue in real time. Built on top of the CUPS printing layer using `lp` and `lpstat`.
+A desktop app I built to manage my printer: 
+upload PDFs, preview pages, configure print settings (B&W/color, copies, odd/even pages), and monitor the print queue in real time. Built on top of the CUPS printing layer using `lp` and `lpstat`.
 
 
 ![Print Console](src/assets/ui.png)
-
 
 > CUPS is the native printing system on Linux and macOS. Does not work on Windows.
 
