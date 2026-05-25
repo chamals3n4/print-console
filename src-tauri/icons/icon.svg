@@ -1,0 +1,23 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" fill="none">
+  <!-- Background circle -->
+  <circle cx="256" cy="256" r="248" fill="#2563eb"/>
+  <!-- Printer body -->
+  <rect x="128" y="160" width="256" height="160" rx="16" fill="white"/>
+  <!-- Printer top / paper feed -->
+  <rect x="160" y="120" width="192" height="56" rx="10" fill="white" stroke="#2563eb" stroke-width="4"/>
+  <!-- Paper slot -->
+  <rect x="176" y="136" width="160" height="24" rx="4" fill="#dbeafe"/>
+  <!-- Paper coming out -->
+  <rect x="180" y="68" width="152" height="64" rx="6" fill="white" stroke="#93c5fd" stroke-width="3"/>
+  <line x1="196" y1="82" x2="316" y2="82" stroke="#93c5fd" stroke-width="4" stroke-linecap="round"/>
+  <line x1="196" y1="96" x2="300" y2="96" stroke="#93c5fd" stroke-width="4" stroke-linecap="round"/>
+  <line x1="196" y1="110" x2="280" y2="110" stroke="#93c5fd" stroke-width="4" stroke-linecap="round"/>
+  <!-- Output tray -->
+  <rect x="140" y="308" width="232" height="20" rx="6" fill="#1d4ed8"/>
+  <!-- Paper in tray -->
+  <rect x="200" y="296" width="112" height="24" rx="4" fill="white"/>
+  <line x1="212" y1="304" x2="300" y2="304" stroke="#bfdbfe" stroke-width="3" stroke-linecap="round"/>
+  <line x1="212" y1="312" x2="288" y2="312" stroke="#bfdbfe" stroke-width="3" stroke-linecap="round"/>
+  <!-- Status dot -->
+  <circle cx="400" cy="160" r="16" fill="#22c55e"/>
+</svg>
