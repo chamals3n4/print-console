@@ -216,10 +216,15 @@ fn print_pdf(
     cmd.arg("-t").arg(file_name.as_ref());
 
     // Multiple options — CUPS picks the one the printer driver understands
+    // if !color {
+    //     cmd.arg("-o").arg("print-color-mode=monochrome");
+    //     cmd.arg("-o").arg("ColorModel=KGray");
+    //     cmd.arg("-o").arg("ColorModel=Gray");
+    // }
     if !color {
-        cmd.arg("-o").arg("print-color-mode=monochrome");
         cmd.arg("-o").arg("ColorModel=KGray");
-        cmd.arg("-o").arg("ColorModel=Gray");
+    } else {
+        cmd.arg("-o").arg("ColorModel=RGB");
     }
 
     if pages == "odd" {
