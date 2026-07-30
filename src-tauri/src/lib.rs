@@ -7,6 +7,34 @@ use std::sync::atomic::{AtomicU64, Ordering};
 /// Keeps each preview render writing to its own temp PNG.
 static PREVIEW_SEQ: AtomicU64 = AtomicU64::new(0);
 
+/// Keeps saved files unique even when two have the same name.
+static FILE_SEQ: AtomicU64 = AtomicU64::new(0);
+
+/// One temp folder per run, so everything can be dropped on exit.
+fn session_dir() -> std::path::PathBuf {
+    std::env::temp_dir().join(format!("print-console-{}", std::process::id()))
+}
+
+fn ensure_session_dir() -> Result<std::path::PathBuf, String> {
+    let dir = session_dir();
+    std::fs::create_dir_all(&dir).map_err(|e| format!("Failed to create temp folder: {}", e))?;
+    Ok(dir)
+}
+
+/// Drops anything that could point the path somewhere other than our folder.
+fn safe_file_name(name: &str) -> String {
+    let cleaned: String = name
+        .chars()
+        .filter(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '.' | ' '))
+        .collect();
+    let trimmed = cleaned.trim_matches(|c| c == '.' || c == ' ');
+    if trimmed.is_empty() {
+        "document.pdf".to_string()
+    } else {
+        trimmed.to_string()
+    }
+}
+
 #[derive(Serialize)]
 struct Printer {
     name: String,
@@ -150,9 +178,15 @@ fn save_temp_file(file_data: String, file_name: String) -> Result<String, String
         .decode(&file_data)
         .map_err(|e| format!("Failed to decode PDF data: {}", e))?;
 
-    let temp_dir = std::env::temp_dir();
-    let temp_path = temp_dir.join(&file_name);
-    let path_str = temp_path.to_str().unwrap().to_string();
+    let dir = ensure_session_dir()?;
+    // Counter prefix so two files with the same name can't overwrite each other
+    let unique = format!(
+        "{:04}_{}",
+        FILE_SEQ.fetch_add(1, Ordering::Relaxed),
+        safe_file_name(&file_name)
+    );
+    let temp_path = dir.join(unique);
+    let path_str = temp_path.to_string_lossy().to_string();
 
     let mut file = std::fs::File::create(&temp_path)
         .map_err(|e| format!("Failed to create temp file: {}", e))?;
@@ -186,6 +220,13 @@ fn cancel_job(job_ref: String) -> Result<String, String> {
     }
 }
 
+/// Reads a saved file back as base64, so the tools can edit it with pdf-lib.
+#[tauri::command]
+fn read_file_base64(file_path: String) -> Result<String, String> {
+    let bytes = std::fs::read(&file_path).map_err(|e| format!("Failed to read file: {}", e))?;
+    Ok(base64::engine::general_purpose::STANDARD.encode(&bytes))
+}
+
 /// Returns how many pages a PDF has, via `pdfinfo`.
 #[tauri::command]
 fn pdf_page_count(file_path: String) -> Result<i32, String> {
@@ -215,13 +256,15 @@ fn pdf_page_count(file_path: String) -> Result<i32, String> {
 /// Returns a base64 data URL so the frontend can display it directly.
 #[tauri::command]
 fn preview_page(file_path: String, page: i32) -> Result<String, String> {
-    // Process ID separates app instances, the counter separates fast page switches
-    let output_base = format!(
-        "{}/prv_{}_{}",
-        std::env::temp_dir().to_str().unwrap(),
-        std::process::id(),
-        PREVIEW_SEQ.fetch_add(1, Ordering::Relaxed)
-    );
+    let dir = ensure_session_dir()?;
+    // The counter separates fast page switches from each other
+    let output_base = dir
+        .join(format!(
+            "prv_{}",
+            PREVIEW_SEQ.fetch_add(1, Ordering::Relaxed)
+        ))
+        .to_string_lossy()
+        .to_string();
     let output_png = format!("{}.png", output_base);
 
     let status = Command::new("pdftoppm")
@@ -250,6 +293,59 @@ fn preview_page(file_path: String, page: i32) -> Result<String, String> {
     Ok(format!("data:image/png;base64,{}", b64))
 }
 
+/// Renders a range of pages as small thumbnails, in a single pdftoppm call.
+#[tauri::command]
+fn preview_pages(file_path: String, from: i32, to: i32) -> Result<Vec<String>, String> {
+    let dir = ensure_session_dir()?;
+    let stem = format!("thumbs_{}", PREVIEW_SEQ.fetch_add(1, Ordering::Relaxed));
+    let output_base = dir.join(&stem);
+
+    let status = Command::new("pdftoppm")
+        .arg("-f")
+        .arg(from.to_string())
+        .arg("-l")
+        .arg(to.to_string())
+        .arg("-scale-to")
+        .arg("180")
+        .arg("-png")
+        .arg(&file_path)
+        .arg(&output_base)
+        .status()
+        .map_err(|e| format!("Failed to run pdftoppm: {}", e))?;
+
+    if !status.success() {
+        return Err("pdftoppm failed to render thumbnails".to_string());
+    }
+
+    // pdftoppm zero-pads page numbers by a width we can't predict, so collect by
+    // prefix and sort on the parsed number instead of guessing file names.
+    let mut rendered: Vec<(u32, std::path::PathBuf)> = Vec::new();
+    let entries =
+        std::fs::read_dir(&dir).map_err(|e| format!("Failed to read temp folder: {}", e))?;
+    for entry in entries.flatten() {
+        let name = entry.file_name().to_string_lossy().to_string();
+        let Some(rest) = name.strip_prefix(&format!("{}-", stem)) else {
+            continue;
+        };
+        if let Some(num) = rest.strip_suffix(".png") {
+            if let Ok(n) = num.parse::<u32>() {
+                rendered.push((n, entry.path()));
+            }
+        }
+    }
+    rendered.sort_by_key(|(n, _)| *n);
+
+    let mut thumbs = Vec::new();
+    for (_, path) in &rendered {
+        let bytes = std::fs::read(path).map_err(|e| format!("Failed to read thumbnail: {}", e))?;
+        let _ = std::fs::remove_file(path);
+        let b64 = base64::engine::general_purpose::STANDARD.encode(&bytes);
+        thumbs.push(format!("data:image/png;base64,{}", b64));
+    }
+
+    Ok(thumbs)
+}
+
 /// Opens a file with the system's default PDF viewer (xdg-open on Linux).
 #[tauri::command]
 fn open_pdf(file_path: String) -> Result<(), String> {
@@ -270,11 +366,17 @@ fn print_pdf(
     copies: i32,
     color: bool,
     pages: String,
+    paper: String,
 ) -> Result<String, String> {
     let mut cmd = Command::new("lp");
 
     if !printer.is_empty() {
         cmd.arg("-d").arg(&printer);
+    }
+
+    // Say the paper size out loud rather than trusting the queue default
+    if !paper.is_empty() {
+        cmd.arg("-o").arg(format!("media={}", paper));
     }
 
     cmd.arg("-n").arg(copies.to_string());
@@ -335,7 +437,7 @@ fn print_pdf(
 // tauri entry point
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    tauri::Builder::default()
+    let app = tauri::Builder::default()
         .setup(|app| {
             if cfg!(debug_assertions) {
                 app.handle().plugin(
@@ -351,11 +453,20 @@ pub fn run() {
             list_print_jobs,
             cancel_job,
             save_temp_file,
+            read_file_base64,
             pdf_page_count,
             preview_page,
+            preview_pages,
             open_pdf,
             print_pdf
         ])
-        .run(tauri::generate_context!())
-        .expect("error while running tauri application");
+        .build(tauri::generate_context!())
+        .expect("error while building tauri application");
+
+    app.run(|_handle, event| {
+        // Throw away this run's temp files when the app closes
+        if let tauri::RunEvent::Exit = event {
+            let _ = std::fs::remove_dir_all(session_dir());
+        }
+    });
 }
