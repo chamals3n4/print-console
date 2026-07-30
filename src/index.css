@@ -4,3 +4,11 @@ body {
     margin: 0;
     font-family: sans-serif;
 }
+
+/* Tailwind v4 gives buttons the default cursor, so put the pointer back */
+button:not(:disabled),
+label[for],
+select:not(:disabled),
+[role="button"] {
+    cursor: pointer;
+}

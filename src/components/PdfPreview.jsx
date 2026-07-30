@@ -54,7 +54,7 @@ function PdfPreview({ filePath, pages }) {
 
   return (
     <>
-      <div className="flex-1 rounded border border-neutral-200 bg-white shadow-sm overflow-hidden flex items-center justify-center min-h-0">
+      <div className="flex-1 rounded-xl border border-neutral-300 bg-white overflow-hidden flex items-center justify-center min-h-0">
         {previewImage ? (
           <img
             src={previewImage}

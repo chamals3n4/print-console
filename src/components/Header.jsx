@@ -8,16 +8,16 @@ function Header({ printers }) {
         <div className="flex items-center gap-2.5">
           <Icon
             name="printer"
-            className="w-4 h-4 text-neutral-400"
+            className="w-5 h-5 text-neutral-500"
             strokeWidth={1.5}
           />
-          <span className="text-xs font-semibold text-neutral-700">
+          <span className="text-sm font-semibold text-neutral-900">
             Print Console
           </span>
         </div>
         <NavTabs />
       </div>
-      <div className="flex items-center gap-2 text-[11px] text-neutral-400">
+      <div className="flex items-center gap-2 text-xs font-medium text-neutral-600">
         <span
           className={`w-1.5 h-1.5 rounded-full ${printers.length > 0 ? "bg-emerald-500" : "bg-red-400"}`}
         />

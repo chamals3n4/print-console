@@ -1,3 +1,4 @@
+import SegmentedControl from "./SegmentedControl";
 import {
   fieldLabel,
   selectCls,
@@ -55,22 +56,9 @@ function PrintSettings({
 
       <div>
         <label className={fieldLabel}>Color Mode</label>
-        <div className="flex">
-          {colorModes.map((opt) => (
-            <button
-              key={opt.value}
-              onClick={() => setMode(opt.value)}
-              className={`flex-1 py-1.5 text-xs font-medium border transition-colors first:rounded-l last:rounded-r ${
-                mode === opt.value
-                  ? "bg-blue-500 border-blue-500 text-white"
-                  : "bg-white border-neutral-300 text-neutral-600 hover:bg-neutral-50"
-              }`}
-            >
-              {opt.label}
-            </button>
-          ))}
-        </div>
+        <SegmentedControl value={mode} onChange={setMode} options={colorModes} />
       </div>
+
 
       <div className="grid grid-cols-2 gap-4">
         <div>

@@ -2,12 +2,13 @@ import { useState } from "react";
 import { useOutletContext } from "react-router-dom";
 import { invoke } from "@tauri-apps/api/core";
 import Icon from "../components/Icon";
-import FilePicker from "../components/FilePicker";
+import DropZone from "../components/DropZone";
 import PdfPreview from "../components/PdfPreview";
 import PrintSettings from "../components/PrintSettings";
 import PrintQueue from "../components/PrintQueue";
 import StatusBanner from "../components/StatusBanner";
 import { saveFileAsDocument } from "../lib/document";
+import { A4 } from "../lib/layout";
 import { secondaryBtnCls } from "../lib/ui";
 
 function PrintRoute() {
@@ -65,6 +66,7 @@ function PrintRoute() {
         copies: Number(copies),
         color: mode === "color",
         pages,
+        paper: A4.media,
       });
       setStatus({ msg: result, type: "success" });
       setQueueKey((k) => k + 1);
@@ -79,7 +81,14 @@ function PrintRoute() {
     <>
       <div className="w-[440px] shrink-0 flex flex-col bg-white border-r border-neutral-200">
         <div className="p-4 pb-3 border-b border-neutral-100">
-          <FilePicker doc={doc} onPick={handlePick} onRemove={handleRemove} />
+          <DropZone
+            doc={doc}
+            onPick={handlePick}
+            onRemove={handleRemove}
+            icon="document"
+            title="Choose a PDF"
+            hint="Click to browse"
+          />
         </div>
         {/* pdf preview*/}
         <div className="flex-1 flex flex-col p-4 pt-3 min-h-0">
@@ -90,7 +99,7 @@ function PrintRoute() {
               pages={pages}
             />
           ) : (
-            <div className="flex-1 rounded border border-neutral-200 bg-white shadow-sm overflow-hidden flex items-center justify-center min-h-0">
+            <div className="flex-1 rounded-xl border border-neutral-300 bg-white overflow-hidden flex items-center justify-center min-h-0">
               <p className="text-xs text-neutral-300">Preview appears here</p>
             </div>
           )}
