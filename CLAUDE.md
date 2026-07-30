@@ -22,7 +22,19 @@ Vite uses `strictPort: true` and Tauri's `devUrl` is hardcoded to `http://localh
 
 ## Architecture
 
-Two files hold essentially all the logic: `src/App.jsx` (single component, all state, all UI) and `src-tauri/src/lib.rs` (all eight Tauri commands). `src-tauri/src/main.rs` just calls `app_lib::run()`.
+All Rust logic lives in `src-tauri/src/lib.rs` (the Tauri commands); `src-tauri/src/main.rs` just calls `app_lib::run()`.
+
+The frontend is routed with `HashRouter` (hash routing because the production build loads over Tauri's custom protocol):
+
+- `App.jsx` — owns the state shared across routes and declares `<Routes>`. Nothing renders UI here.
+- `components/Layout.jsx` — the shell; passes shared state down through `<Outlet context={shared}>`, which route views read via `useOutletContext()`.
+- `routes/` — one file per route: `PrintRoute` (the original print UI), plus `ImageToPdfRoute`, `MergeRoute`, `PagesRoute`.
+- `components/` — UI pieces only (`FilePicker`, `PdfPreview`, `PrintSettings`, `PrintQueue`, `JobRow`, `Icon`, …).
+- `lib/ui.js` — shared Tailwind class tokens; `lib/document.js` — turning files or pdf-lib bytes into a saved temp document.
+
+**The `doc` object** (`{ path, name, size }`) in `App.jsx` is the handoff mechanism: a tool route builds a PDF, saves it via `saveBytesAsDocument`, sets `doc`, and navigates to `/`. Printing needs no knowledge of where the PDF came from.
+
+**Avoid `setState` in effect bodies** — `eslint-plugin-react-hooks` errors on it and the repo is currently clean. Two patterns are used instead: derive "loading" by comparing what was requested against what completed (`PdfPreview`, `PrintQueue`), and remount via `key` to reset state (`<PdfPreview key={`${doc.path}:${pages}`}>`) rather than resetting it in an effect.
 
 The frontend never touches the filesystem or a PDF library. Flow for a selected file:
 
