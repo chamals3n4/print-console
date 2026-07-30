@@ -16,6 +16,11 @@ function App() {
   const [statusType, setStatusType] = useState("");
   const [jobs, setJobs] = useState([]);
   const [loadingJobs, setLoadingJobs] = useState(false);
+  const [previewPage, setPreviewPage] = useState(1);
+  const [pageCount, setPageCount] = useState(0);
+  const [loadingPreview, setLoadingPreview] = useState(false);
+  const [confirmCancel, setConfirmCancel] = useState(null);
+  const [cancelling, setCancelling] = useState(null);
   const jobsInterval = useRef(null);
 
   useEffect(() => {
@@ -55,8 +60,26 @@ function App() {
     setSelectedFile(null);
     setTempFilePath(null);
     setPreviewImage(null);
+    setPageCount(0);
+    setPreviewPage(1);
     setStatusMsg("");
     setStatusType("");
+  };
+
+  const handleCancelJob = async (jobRef) => {
+    setConfirmCancel(null);
+    setCancelling(jobRef);
+    try {
+      const result = await invoke("cancel_job", { jobRef });
+      setStatusMsg(result);
+      setStatusType("success");
+      await fetchJobs();
+    } catch (err) {
+      setStatusMsg(`Cancel failed: ${err}`);
+      setStatusType("error");
+    } finally {
+      setCancelling(null);
+    }
   };
 
   const handleFile = async (e) => {
@@ -68,6 +91,8 @@ function App() {
     setStatusType("");
     setTempFilePath(null);
     setPreviewImage(null);
+    setPageCount(0);
+    setPreviewPage(pages === "even" ? 2 : 1);
 
     const reader = new FileReader();
     reader.onload = async () => {
@@ -88,6 +113,12 @@ function App() {
       setStatusType("error");
     };
     reader.readAsDataURL(file);
+  };
+
+  // Jump back to the first page this mode prints
+  const handlePagesChange = (value) => {
+    setPages(value);
+    setPreviewPage(value === "even" ? 2 : 1);
   };
 
   const handleOpenPdf = async () => {
@@ -153,28 +184,55 @@ function App() {
     backgroundSize: "1.25em",
   };
 
+  // Odd/even skips every other page, so the pager matches what gets printed
+  const pageStep = pages === "all" ? 1 : 2;
+  const canPrevPage = previewPage - pageStep >= 1;
+  const canNextPage = pageCount > 0 && previewPage + pageStep <= pageCount;
+
+  // The file handlers clear pageCount, so this effect never has to
+  useEffect(() => {
+    if (!tempFilePath) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const count = await invoke("pdf_page_count", {
+          filePath: tempFilePath,
+        });
+        if (!cancelled) setPageCount(count);
+      } catch {
+        // No count means no pager, page 1 still shows
+        if (!cancelled) setPageCount(0);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [tempFilePath]);
+
   useEffect(() => {
     if (!tempFilePath) {
       setPreviewImage(null);
       return;
     }
     let cancelled = false;
-    const page = pages === "even" ? 2 : 1;
+    setLoadingPreview(true);
     (async () => {
       try {
         const img = await invoke("preview_page", {
           filePath: tempFilePath,
-          page,
+          page: previewPage,
         });
         if (!cancelled) setPreviewImage(img);
       } catch {
         if (!cancelled) setPreviewImage(null);
+      } finally {
+        if (!cancelled) setLoadingPreview(false);
       }
     })();
     return () => {
       cancelled = true;
     };
-  }, [tempFilePath, pages]);
+  }, [tempFilePath, previewPage]);
 
   return (
     <div className="h-screen flex flex-col bg-neutral-100 font-sans antialiased">
@@ -289,13 +347,69 @@ function App() {
               {previewImage ? (
                 <img
                   src={previewImage}
-                  alt="PDF preview"
-                  className="w-full h-full object-contain"
+                  alt={`PDF preview, page ${previewPage}`}
+                  className={`w-full h-full object-contain transition-opacity ${
+                    loadingPreview ? "opacity-40" : "opacity-100"
+                  }`}
                 />
+              ) : loadingPreview ? (
+                <p className="text-xs text-neutral-300">Rendering…</p>
               ) : (
                 <p className="text-xs text-neutral-300">Preview appears here</p>
               )}
             </div>
+
+            {tempFilePath && pageCount > 0 && (
+              <div className="mt-2.5 flex items-center justify-center gap-1">
+                <button
+                  onClick={() => setPreviewPage((p) => p - pageStep)}
+                  disabled={!canPrevPage}
+                  aria-label="Previous page"
+                  className="w-7 h-7 flex items-center justify-center rounded border border-neutral-200 bg-white text-neutral-500 hover:bg-neutral-50 transition-colors disabled:opacity-30 disabled:cursor-not-allowed"
+                >
+                  <svg
+                    className="w-3 h-3"
+                    fill="none"
+                    viewBox="0 0 24 24"
+                    stroke="currentColor"
+                    strokeWidth={2}
+                  >
+                    <path
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                      d="M15 19l-7-7 7-7"
+                    />
+                  </svg>
+                </button>
+                <span className="px-2 text-[11px] text-neutral-500 tabular-nums">
+                  Page {previewPage} of {pageCount}
+                  {pages !== "all" && (
+                    <span className="text-neutral-400"> · {pages} only</span>
+                  )}
+                </span>
+                <button
+                  onClick={() => setPreviewPage((p) => p + pageStep)}
+                  disabled={!canNextPage}
+                  aria-label="Next page"
+                  className="w-7 h-7 flex items-center justify-center rounded border border-neutral-200 bg-white text-neutral-500 hover:bg-neutral-50 transition-colors disabled:opacity-30 disabled:cursor-not-allowed"
+                >
+                  <svg
+                    className="w-3 h-3"
+                    fill="none"
+                    viewBox="0 0 24 24"
+                    stroke="currentColor"
+                    strokeWidth={2}
+                  >
+                    <path
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                      d="M9 5l7 7-7 7"
+                    />
+                  </svg>
+                </button>
+              </div>
+            )}
+
             <button
               onClick={handleOpenPdf}
               disabled={!tempFilePath}
@@ -416,7 +530,7 @@ function App() {
                     <label className={fieldLabel}>Pages</label>
                     <select
                       value={pages}
-                      onChange={(e) => setPages(e.target.value)}
+                      onChange={(e) => handlePagesChange(e.target.value)}
                       className={selectCls}
                       style={selectArrow}
                     >
@@ -472,7 +586,7 @@ function App() {
                   <div className="space-y-1.5">
                     {jobs.map((job) => (
                       <div
-                        key={`${job.printer}-${job.id}`}
+                        key={job.job_ref}
                         className="flex items-center gap-3 px-3 py-2.5 rounded border border-neutral-100 bg-neutral-50"
                       >
                         <div className="flex-1 min-w-0">
@@ -509,6 +623,38 @@ function App() {
                             <div className="h-1 rounded-full bg-neutral-200 overflow-hidden">
                               <div className="h-full rounded-full bg-amber-400 w-1/3" />
                             </div>
+                          )}
+                        </div>
+
+                        {/* Two clicks to cancel, so no job dies by accident */}
+                        <div className="w-14 shrink-0 flex justify-end">
+                          {cancelling === job.job_ref ? (
+                            <span className="text-[10px] text-neutral-400">
+                              Cancelling…
+                            </span>
+                          ) : confirmCancel === job.job_ref ? (
+                            <div className="flex items-center gap-1">
+                              <button
+                                onClick={() => handleCancelJob(job.job_ref)}
+                                className="text-[10px] font-semibold text-white bg-red-500 hover:bg-red-600 rounded px-1.5 py-0.5 transition-colors"
+                              >
+                                Sure?
+                              </button>
+                              <button
+                                onClick={() => setConfirmCancel(null)}
+                                aria-label="Keep job"
+                                className="text-[10px] text-neutral-400 hover:text-neutral-600 transition-colors"
+                              >
+                                ✕
+                              </button>
+                            </div>
+                          ) : (
+                            <button
+                              onClick={() => setConfirmCancel(job.job_ref)}
+                              className="text-[10px] text-neutral-400 hover:text-red-500 transition-colors"
+                            >
+                              Cancel
+                            </button>
                           )}
                         </div>
                       </div>

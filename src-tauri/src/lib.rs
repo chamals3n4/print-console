@@ -2,6 +2,10 @@ use base64::Engine;
 use serde::{Deserialize, Serialize};
 use std::io::Write;
 use std::process::Command;
+use std::sync::atomic::{AtomicU64, Ordering};
+
+/// Keeps each preview render writing to its own temp PNG.
+static PREVIEW_SEQ: AtomicU64 = AtomicU64::new(0);
 
 #[derive(Serialize)]
 struct Printer {
@@ -11,12 +15,33 @@ struct Printer {
 
 #[derive(Serialize, Deserialize, Clone)]
 struct PrintJob {
+    /// CUPS job token ("PrinterName-123"), kept exactly as reported.
+    job_ref: String,
     id: String,
     printer: String,
     owner: String,
     size_bytes: u64,
     status: String,
     name: String,
+}
+
+/// Rejects anything that doesn't look like a CUPS job id.
+fn is_valid_job_ref(job_ref: &str) -> bool {
+    !job_ref.is_empty()
+        && job_ref.len() <= 128
+        && job_ref
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '.' | '@'))
+}
+
+/// Splits "Printer-123" into printer + id. Last hyphen, since printer names have hyphens too.
+fn split_job_ref(job_ref: &str) -> (String, String) {
+    let parts: Vec<&str> = job_ref.rsplitn(2, '-').collect();
+    if parts.len() == 2 && !parts[0].is_empty() && parts[0].chars().all(|c| c.is_ascii_digit()) {
+        (parts[1].to_string(), parts[0].to_string())
+    } else {
+        (job_ref.to_string(), "?".to_string())
+    }
 }
 
 /// Queries CUPS for available printers via `lpstat -p`
@@ -75,25 +100,20 @@ fn list_print_jobs() -> Result<Vec<PrintJob>, String> {
 
         let parts: Vec<&str> = line.split_whitespace().collect();
         if parts.len() >= 3 {
-            // Split "PrinterName-123" into printer + job ID
-            let printer_job: Vec<&str> = parts[0].splitn(2, '-').collect();
-            let printer = printer_job[0].to_string();
-            let job_id = if printer_job.len() > 1 {
-                printer_job[1].to_string()
-            } else {
-                "?".to_string()
-            };
+            let job_ref = parts[0].to_string();
+            let (printer, job_id) = split_job_ref(&job_ref);
             let owner = parts[1].to_string();
             let size_bytes: u64 = parts[2].parse().unwrap_or(0);
-            let status = get_job_status(&printer, &job_id);
+            let status = get_job_status(&job_ref);
 
             jobs.push(PrintJob {
+                name: format!("Job #{}", job_ref),
+                job_ref,
                 id: job_id,
                 printer,
                 owner,
                 size_bytes,
                 status,
-                name: format!("Job #{}", parts[0]),
             });
         }
     }
@@ -102,12 +122,11 @@ fn list_print_jobs() -> Result<Vec<PrintJob>, String> {
 }
 
 /// Gets detailed status for a single job via `lpstat -l -o printer-jobid`.
-fn get_job_status(printer: &str, job_id: &str) -> String {
-    let job_ref = format!("{}-{}", printer, job_id);
+fn get_job_status(job_ref: &str) -> String {
     let output = Command::new("lpstat")
         .arg("-l")
         .arg("-o")
-        .arg(&job_ref)
+        .arg(job_ref)
         .output();
 
     if let Ok(out) = output {
@@ -143,15 +162,65 @@ fn save_temp_file(file_data: String, file_name: String) -> Result<String, String
     Ok(path_str)
 }
 
+/// Cancels a job via `cancel <printer>-<jobid>`.
+#[tauri::command]
+fn cancel_job(job_ref: String) -> Result<String, String> {
+    if !is_valid_job_ref(&job_ref) {
+        return Err(format!("Refusing to cancel invalid job id: {}", job_ref));
+    }
+
+    let output = Command::new("cancel")
+        .arg(&job_ref)
+        .output()
+        .map_err(|e| format!("Failed to run cancel: {}", e))?;
+
+    let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+
+    // `cancel` is silent on success, and can exit 0 but still complain, so check both
+    if output.status.success() && stderr.is_empty() {
+        Ok(format!("Cancelled job {}", job_ref))
+    } else if stderr.is_empty() {
+        Err(format!("Could not cancel job {}", job_ref))
+    } else {
+        Err(stderr)
+    }
+}
+
+/// Returns how many pages a PDF has, via `pdfinfo`.
+#[tauri::command]
+fn pdf_page_count(file_path: String) -> Result<i32, String> {
+    let output = Command::new("pdfinfo")
+        .arg(&file_path)
+        .output()
+        .map_err(|e| format!("Failed to run pdfinfo: {}", e))?;
+
+    if !output.status.success() {
+        return Err(String::from_utf8_lossy(&output.stderr).trim().to_string());
+    }
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    // `pdfinfo` output contains a line like "Pages:           12"
+    for line in stdout.lines() {
+        if let Some(rest) = line.strip_prefix("Pages:") {
+            if let Ok(n) = rest.trim().parse::<i32>() {
+                return Ok(n);
+            }
+        }
+    }
+
+    Err("Could not determine page count".to_string())
+}
+
 /// Renders a single page of a PDF to a 600px-wide PNG using `pdftoppm`.
 /// Returns a base64 data URL so the frontend can display it directly.
 #[tauri::command]
 fn preview_page(file_path: String, page: i32) -> Result<String, String> {
-    // Use process ID to avoid collisions between multiple preview renders
+    // Process ID separates app instances, the counter separates fast page switches
     let output_base = format!(
-        "{}/prv_{}",
+        "{}/prv_{}_{}",
         std::env::temp_dir().to_str().unwrap(),
-        std::process::id()
+        std::process::id(),
+        PREVIEW_SEQ.fetch_add(1, Ordering::Relaxed)
     );
     let output_png = format!("{}.png", output_base);
 
@@ -280,7 +349,9 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             list_printers,
             list_print_jobs,
+            cancel_job,
             save_temp_file,
+            pdf_page_count,
             preview_page,
             open_pdf,
             print_pdf
