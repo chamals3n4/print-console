@@ -2,7 +2,7 @@
   "$schema": "../node_modules/@tauri-apps/cli/config.schema.json",
   "productName": "Print Console",
   "version": "2.0.0",
-  "identifier": "com.tauri.dev",
+  "identifier": "io.github.chamals3n4.printconsole",
   "build": {
     "frontendDist": "../dist",
     "devUrl": "http://localhost:5173",
@@ -33,6 +33,11 @@
       "icons/icon.icns",
       "icons/icon.ico"
     ],
+    "linux": {
+      "deb": {
+        "depends": ["cups", "poppler-utils"]
+      }
+    },
     "android": {
       "debugApplicationIdSuffix": ".debug"
     }
